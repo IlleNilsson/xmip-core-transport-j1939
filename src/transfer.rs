@@ -9,6 +9,7 @@
 //! At most 255 packets, so a payload is at most 1785 bytes — the ceiling,
 //! and a fact of the protocol.
 
+use transport::ceiling;
 use transport::error::{Result, protocol_error};
 
 /// Connection management, PDU1: its specific byte is the destination.
@@ -130,11 +131,7 @@ impl Control {
 /// # Errors
 /// A size over [`CEILING`].
 pub fn packets_for(size: usize) -> Result<u8> {
-    if size > CEILING {
-        return Err(protocol_error(format!(
-            "{size} bytes is over the J1939 ceiling of {CEILING}"
-        )));
-    }
+    ceiling::within(size, CEILING, "one J1939 transfer carries")?;
     Ok(u8::try_from(size.div_ceil(PACKET_DATA).max(1)).unwrap_or(u8::MAX))
 }
 

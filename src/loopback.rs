@@ -6,14 +6,11 @@
 //! everyone, the same payload goes by BAM with nothing coming back. The two
 //! ends need two threads, so the capability's `round` drives it.
 
-use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::Arc;
 
 use can_bus::Bus;
 use sdk::broadcast::Medium;
-use transport::Arrived;
-use transport::error::{Result, protocol_error};
+use transport::error::Result;
 use transport::loopback::{FarEnd, LOOPBACK_TIMEOUT, Loopback};
 
 use crate::J1939Transport;
@@ -29,14 +26,6 @@ pub(crate) struct Session {
     sender: Arc<dyn Bus>,
     receiver: Arc<dyn Bus>,
 }
-
-/// The sessions a loopback has stood up and not yet taken, by address. A
-/// fresh bus per round, so rounds driven at once from several
-/// threads never read each other's frames.
-pub(crate) type Standing = Arc<Mutex<HashMap<String, Session>>>;
-
-/// Numbers the sessions, so each address names one.
-static NEXT_SESSION: AtomicU64 = AtomicU64::new(1);
 
 /// The loopback's sending node.
 pub const SENDER: u8 = 0x80;
@@ -60,13 +49,7 @@ impl J1939Transport {
 
     /// The sending node's end of the session at `address`.
     fn sender(&self, address: &str) -> Result<Self> {
-        let session = self
-            .standing
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .get(address)
-            .cloned()
-            .ok_or_else(|| protocol_error(format!("{address} is not a session stood up here")))?;
+        let session = self.standing.session(address)?;
         Ok(
             Self::new(Arc::clone(&session.sender), session.sender, self.source)
                 .addressed_to(self.pgn, self.destination)
@@ -77,29 +60,6 @@ impl J1939Transport {
     }
 }
 
-/// A node waiting to collect its one parameter group. It owns the session:
-/// the address is forgotten once the group is taken.
-struct Node {
-    end: J1939Transport,
-    standing: Standing,
-    address: String,
-}
-
-impl FarEnd for Node {
-    fn address(&self) -> &str {
-        &self.address
-    }
-
-    fn take_one(self: Box<Self>) -> Result<Arrived> {
-        let taken = self.end.collect();
-        self.standing
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .remove(&self.address);
-        taken
-    }
-}
-
 impl Loopback for J1939Transport {
     /// [`CEILING`]: 255 packets of seven bytes, the fact J1939-21 states
     /// about its one-byte sequence number.
@@ -107,6 +67,8 @@ impl Loopback for J1939Transport {
         Some(CEILING)
     }
 
+    /// A node waiting to collect its one parameter group. It owns the
+    /// session: the address is forgotten once the group is taken.
     fn far_end(&self) -> Result<Box<dyn FarEnd>> {
         let medium = Medium::new("loopback");
         let session = Session {
@@ -121,19 +83,8 @@ impl Loopback for J1939Transport {
         .at_priority(self.priority)
         .clearing(self.block)
         .timing_out_after(self.timeout);
-        let address = format!(
-            "j1939://loopback/{}",
-            NEXT_SESSION.fetch_add(1, Ordering::Relaxed)
-        );
-        self.standing
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .insert(address.clone(), session);
-        Ok(Box::new(Node {
-            end: receiver,
-            standing: Arc::clone(&self.standing),
-            address,
-        }))
+        let address = self.standing.stand("j1939", session);
+        Ok(self.standing.far_end(address, move || receiver.collect()))
     }
 
     fn send_to(&self, address: &str, payload: &[u8]) -> Result<()> {
@@ -189,10 +140,7 @@ mod tests {
             started.elapsed() < LOOPBACK_TIMEOUT,
             "a refused send is judged, never waited on"
         );
-        assert!(
-            loopback.standing.lock().expect("lock").is_empty(),
-            "a taken session is forgotten"
-        );
+        assert!(loopback.standing.is_empty(), "a taken session is forgotten");
     }
 
     #[test]
