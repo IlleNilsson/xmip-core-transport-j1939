@@ -1,8 +1,8 @@
 //! Both ends of one J1939 exchange on this machine (ADR-0051).
 //!
-//! A sending node and a receiving node on a fresh pair of directed loopback
-//! buses per round: the sender's request to send crosses one, the receiver's
-//! clear to send comes back on the other, and the data follows. Addressed to
+//! A sending node and a receiving node on a fresh simulated bus per round:
+//! the sender's request to send reaches the receiver, its clear to send comes
+//! back, and the data follows. Addressed to
 //! everyone, the same payload goes by BAM with nothing coming back. The two
 //! ends need two threads, so the capability's `round` drives it.
 
@@ -10,7 +10,8 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
-use can_bus::{Bus, Loopback as LoopbackBus};
+use can_bus::Bus;
+use sdk::broadcast::Medium;
 use transport::Arrived;
 use transport::error::{Result, protocol_error};
 use transport::loopback::{FarEnd, LOOPBACK_TIMEOUT, Loopback};
@@ -19,16 +20,18 @@ use crate::J1939Transport;
 use crate::identifier::PROPRIETARY_A;
 use crate::transfer::{CEILING, Control, TP_CM};
 
-/// The two directed buses of one loopback exchange: the sender transmits
-/// on `to_receiver` and reads `to_sender`, the receiver the other way round.
+/// One loopback exchange: the sending node and the receiving node on one
+/// simulated bus, each hearing what the other transmits. Until 2026-09-24 an
+/// exchange was two directed queues, because the in-process bus returned a
+/// node's own frames.
 #[derive(Clone)]
 pub(crate) struct Session {
-    to_receiver: Arc<dyn Bus>,
-    to_sender: Arc<dyn Bus>,
+    sender: Arc<dyn Bus>,
+    receiver: Arc<dyn Bus>,
 }
 
 /// The sessions a loopback has stood up and not yet taken, by address. A
-/// fresh pair of buses per round, so rounds driven at once from several
+/// fresh bus per round, so rounds driven at once from several
 /// threads never read each other's frames.
 pub(crate) type Standing = Arc<Mutex<HashMap<String, Session>>>;
 
@@ -43,13 +46,13 @@ pub const RECEIVER: u8 = 0x21;
 impl J1939Transport {
     /// Both ends on this machine: a node at [`SENDER`] whose far end is a
     /// node at [`RECEIVER`], sending [`PROPRIETARY_A`] to it by RTS/CTS,
-    /// the two on a fresh pair of directed loopback buses per round, the
-    /// loopback timeout on both. Addressed to [`GLOBAL`], a long payload
-    /// goes by BAM instead. The buses this instance itself holds carry
-    /// nothing; every round stands up its own.
+    /// the two nodes on a fresh simulated bus per round, the loopback
+    /// timeout on both. Addressed to [`GLOBAL`], a long payload goes by BAM
+    /// instead. The bus this instance itself holds carries nothing; every
+    /// round stands up its own.
     #[must_use]
     pub fn loopback() -> Self {
-        let idle: Arc<dyn Bus> = Arc::new(LoopbackBus::new());
+        let idle: Arc<dyn Bus> = Arc::new(Medium::new("loopback").node());
         Self::new(Arc::clone(&idle), idle, SENDER)
             .addressed_to(PROPRIETARY_A, RECEIVER)
             .timing_out_after(LOOPBACK_TIMEOUT)
@@ -65,7 +68,7 @@ impl J1939Transport {
             .cloned()
             .ok_or_else(|| protocol_error(format!("{address} is not a session stood up here")))?;
         Ok(
-            Self::new(session.to_receiver, session.to_sender, self.source)
+            Self::new(Arc::clone(&session.sender), session.sender, self.source)
                 .addressed_to(self.pgn, self.destination)
                 .at_priority(self.priority)
                 .clearing(self.block)
@@ -105,13 +108,14 @@ impl Loopback for J1939Transport {
     }
 
     fn far_end(&self) -> Result<Box<dyn FarEnd>> {
+        let medium = Medium::new("loopback");
         let session = Session {
-            to_receiver: Arc::new(LoopbackBus::new()),
-            to_sender: Arc::new(LoopbackBus::new()),
+            sender: Arc::new(medium.node()),
+            receiver: Arc::new(medium.node()),
         };
         let receiver = Self::new(
-            Arc::clone(&session.to_sender),
-            Arc::clone(&session.to_receiver),
+            Arc::clone(&session.receiver),
+            Arc::clone(&session.receiver),
             RECEIVER,
         )
         .at_priority(self.priority)

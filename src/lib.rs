@@ -12,11 +12,10 @@
 //! packets — 1785 bytes, the ceiling.
 //!
 //! The carrier is [`can_bus`](can_bus): J1939 reuses its [`Bus`],
-//! [`Frame`] and loopback bus rather than knowing a wire of its own. Two
-//! directed buses stand for the two directions of one exchange, so a sender
-//! and a receiver round-trip in process with no hardware, which is what
-//! [`J1939Transport::loopback`] stands up (ADR-0051). On a vehicle both are
-//! the one `can0`.
+//! [`Frame`] rather than knowing a wire of its own. A sender and a receiver
+//! are two nodes on one bus — in process, the SDK's simulated one — so they
+//! round-trip with no hardware, which is what [`J1939Transport::loopback`]
+//! stands up (ADR-0051). On a vehicle the bus is `can0`.
 //!
 //! The origin URI names the group and the node it came from:
 //! `j1939://<bus>/0x<pgn>?from=0x<source>`.
@@ -41,7 +40,7 @@ use crate::transfer::{PACKET_DATA, SINGLE_FRAME, TP_CM, TP_DT};
 /// One node on a J1939 bus.
 ///
 /// `outbound` carries what this node transmits, `inbound` what the others
-/// do; on a vehicle they are the one bus, in a loopback two directed ones.
+/// do; on a vehicle and on the simulated bus they are one node.
 #[derive(Clone)]
 pub struct J1939Transport {
     outbound: Arc<dyn Bus>,
@@ -317,14 +316,23 @@ impl Transport for J1939Transport {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use can_bus::Loopback as LoopbackBus;
+    use sdk::broadcast::Medium;
+
+    /// Two nodes on one simulated bus.
+    fn two_nodes() -> (Arc<dyn Bus>, Arc<dyn Bus>) {
+        let medium = Medium::new("loopback");
+        (Arc::new(medium.node()), Arc::new(medium.node()))
+    }
 
     #[test]
     fn a_target_overrides_the_group_and_the_destination() {
-        let bus: Arc<dyn Bus> = Arc::new(LoopbackBus::new());
-        let node = J1939Transport::new(Arc::clone(&bus), Arc::clone(&bus), 0x10)
+        // A node does not hear its own frames, so another sends what it
+        // collects, from the same source address.
+        let (there, here) = two_nodes();
+        let sender = J1939Transport::new(Arc::clone(&there), there, 0x10);
+        let node = J1939Transport::new(Arc::clone(&here), here, 0x10)
             .timing_out_after(Duration::from_millis(10));
-        node.send("j1939://can0/0xfeca", b"rpm").expect("sending");
+        sender.send("j1939://can0/0xfeca", b"rpm").expect("sending");
         let arrived = node.collect().expect("collect");
         assert_eq!(arrived.bytes, b"rpm");
         assert_eq!(arrived.origin_uri, "j1939://loopback/0xfeca?from=0x10");
@@ -350,8 +358,9 @@ mod tests {
 
     #[test]
     fn a_frame_that_breaks_the_protocol_is_refused() {
-        let bus: Arc<dyn Bus> = Arc::new(LoopbackBus::new());
-        let node = J1939Transport::new(Arc::clone(&bus), Arc::clone(&bus), 0x10)
+        // The frames that break the protocol come from another node.
+        let (bus, here) = two_nodes();
+        let node = J1939Transport::new(Arc::clone(&here), here, 0x10)
             .timing_out_after(Duration::from_millis(10));
         bus.transmit(&Frame::new(0x181, false, b"std").expect("frame"))
             .expect("transmit");
