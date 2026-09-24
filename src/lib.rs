@@ -29,6 +29,7 @@ use std::time::{Duration, Instant};
 
 use can_bus::{Bus, Frame};
 use transport::error::{Result, protocol_error};
+use transport::standing::Standing;
 use transport::{Arrived, Directions, Transport};
 
 pub use identifier::{DEFAULT_PRIORITY, GLOBAL, Identifier, PROPRIETARY_A, PROPRIETARY_B};
@@ -51,7 +52,7 @@ pub struct J1939Transport {
     priority: u8,
     block: u8,
     timeout: Duration,
-    standing: loopback::Standing,
+    standing: Standing<loopback::Session>,
 }
 
 impl J1939Transport {
@@ -68,7 +69,7 @@ impl J1939Transport {
             priority: DEFAULT_PRIORITY,
             block: u8::MAX,
             timeout: Duration::from_secs(1),
-            standing: loopback::Standing::default(),
+            standing: Standing::default(),
         }
     }
 
