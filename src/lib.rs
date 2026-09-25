@@ -27,6 +27,7 @@ pub mod transfer;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use can_bus::loopback::Session;
 use can_bus::{Bus, Frame};
 use transport::error::{Result, protocol_error};
 use transport::standing::Standing;
@@ -52,7 +53,7 @@ pub struct J1939Transport {
     priority: u8,
     block: u8,
     timeout: Duration,
-    standing: Standing<loopback::Session>,
+    standing: Standing<Session>,
 }
 
 impl J1939Transport {
@@ -317,12 +318,11 @@ impl Transport for J1939Transport {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sdk::broadcast::Medium;
 
     /// Two nodes on one simulated bus.
     fn two_nodes() -> (Arc<dyn Bus>, Arc<dyn Bus>) {
-        let medium = Medium::new("loopback");
-        (Arc::new(medium.node()), Arc::new(medium.node()))
+        let session = Session::fresh();
+        (session.near, session.far)
     }
 
     #[test]

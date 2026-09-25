@@ -5,10 +5,17 @@
 //! back, and the data follows. Addressed to
 //! everyone, the same payload goes by BAM with nothing coming back. The two
 //! ends need two threads, so the capability's `round` drives it.
+//!
+//! The two nodes are CAN's [`Session`], the pair ISO-TP, UDS and OBD-II
+//! stand up too: the sender is its near node and the receiver its far one.
+//! This crate stood up the same pair under its own type until 2026-09-25.
+//! What crosses between them is J1939-21's own transport protocol, not
+//! ISO 15765-2's, which is why J1939 shares CAN's session and not ISO-TP.
 
 use std::sync::Arc;
 
 use can_bus::Bus;
+use can_bus::loopback::Session;
 use sdk::broadcast::Medium;
 use transport::error::Result;
 use transport::loopback::{FarEnd, LOOPBACK_TIMEOUT, Loopback};
@@ -16,16 +23,6 @@ use transport::loopback::{FarEnd, LOOPBACK_TIMEOUT, Loopback};
 use crate::J1939Transport;
 use crate::identifier::PROPRIETARY_A;
 use crate::transfer::{CEILING, Control, TP_CM};
-
-/// One loopback exchange: the sending node and the receiving node on one
-/// simulated bus, each hearing what the other transmits. Until 2026-09-24 an
-/// exchange was two directed queues, because the in-process bus returned a
-/// node's own frames.
-#[derive(Clone)]
-pub(crate) struct Session {
-    sender: Arc<dyn Bus>,
-    receiver: Arc<dyn Bus>,
-}
 
 /// The loopback's sending node.
 pub const SENDER: u8 = 0x80;
@@ -51,7 +48,7 @@ impl J1939Transport {
     fn sender(&self, address: &str) -> Result<Self> {
         let session = self.standing.session(address)?;
         Ok(
-            Self::new(Arc::clone(&session.sender), session.sender, self.source)
+            Self::new(Arc::clone(&session.near), session.near, self.source)
                 .addressed_to(self.pgn, self.destination)
                 .at_priority(self.priority)
                 .clearing(self.block)
@@ -70,19 +67,11 @@ impl Loopback for J1939Transport {
     /// A node waiting to collect its one parameter group. It owns the
     /// session: the address is forgotten once the group is taken.
     fn far_end(&self) -> Result<Box<dyn FarEnd>> {
-        let medium = Medium::new("loopback");
-        let session = Session {
-            sender: Arc::new(medium.node()),
-            receiver: Arc::new(medium.node()),
-        };
-        let receiver = Self::new(
-            Arc::clone(&session.receiver),
-            Arc::clone(&session.receiver),
-            RECEIVER,
-        )
-        .at_priority(self.priority)
-        .clearing(self.block)
-        .timing_out_after(self.timeout);
+        let session = Session::fresh();
+        let receiver = Self::new(Arc::clone(&session.far), Arc::clone(&session.far), RECEIVER)
+            .at_priority(self.priority)
+            .clearing(self.block)
+            .timing_out_after(self.timeout);
         let address = self.standing.stand("j1939", session);
         Ok(self.standing.far_end(address, move || receiver.collect()))
     }
