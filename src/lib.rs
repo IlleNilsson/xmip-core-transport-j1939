@@ -22,6 +22,7 @@
 
 pub mod identifier;
 pub mod loopback;
+mod settings;
 pub mod transfer;
 
 use std::sync::Arc;
