@@ -107,7 +107,7 @@ impl Identifier {
 
 /// Whether `pgn` is PDU1, carrying a destination in its specific byte.
 #[must_use]
-pub const fn is_destination_specific(pgn: u32) -> bool {
+const fn is_destination_specific(pgn: u32) -> bool {
     (pgn >> 8) & 0xff < PDU2
 }
 
