@@ -9,7 +9,7 @@
 //! At most 255 packets, so a payload is at most 1785 bytes — the ceiling,
 //! and a fact of the protocol.
 
-use transport::ceiling;
+use net::ceiling;
 use transport::error::{Result, protocol_error};
 
 /// Connection management, PDU1: its specific byte is the destination.
@@ -19,11 +19,11 @@ pub const TP_DT: u32 = 0xeb00;
 /// A data packet carries this many bytes beside its sequence number.
 pub const PACKET_DATA: usize = 7;
 /// The sequence number is one byte and starts at one.
-pub const MAX_PACKETS: usize = 255;
+const MAX_PACKETS: usize = 255;
 /// The largest payload the transport protocol carries whole.
 pub const CEILING: usize = PACKET_DATA * MAX_PACKETS;
 /// What fills a frame after the data ends.
-pub const PADDING: u8 = 0xff;
+const PADDING: u8 = 0xff;
 /// A payload this long or shorter rides in one frame of its own group.
 pub const SINGLE_FRAME: usize = 8;
 

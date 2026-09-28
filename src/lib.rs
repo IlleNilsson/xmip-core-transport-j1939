@@ -30,6 +30,8 @@ use std::time::{Duration, Instant};
 
 use can_bus::loopback::Session;
 use can_bus::{Bus, Frame};
+use codec::hex::prefixed_number;
+use net::Target;
 use transport::error::{Result, protocol_error};
 use transport::standing::Standing;
 use transport::{Arrived, Directions, Transport};
@@ -272,28 +274,23 @@ impl J1939Transport {
     /// `j1939://<bus>/0x<pgn>?to=0x<destination>`, either part optional:
     /// what `target` overrides of this node's group and destination.
     fn addressed(&self, target: &str) -> Result<(u32, u8)> {
-        let Some((_, rest)) = transport::socket::target("j1939", target) else {
+        let Some(named) = Target::under(&["j1939"], target) else {
             return Ok((self.pgn, self.destination));
         };
-        let (path, query) = rest.split_once('?').unwrap_or((rest, ""));
+        let path = named.path();
         let pgn = if path.is_empty() {
             self.pgn
         } else {
-            hex(path).ok_or_else(|| protocol_error(format!("{path} is not a group number")))?
+            prefixed_number(path)
+                .map_err(|_| protocol_error(format!("{path} is not a group number")))?
         };
-        let destination = match query.strip_prefix("to=") {
-            Some(to) => u8::try_from(
-                hex(to).ok_or_else(|| protocol_error(format!("{to} is not an address")))?,
-            )
-            .map_err(|_| protocol_error(format!("{to} is wider than an address")))?,
+        let destination = match named.query_value("to") {
+            Some(to) => prefixed_number(&to)
+                .map_err(|_| protocol_error(format!("{to} is not an address")))?,
             None => self.destination,
         };
         Ok((pgn, destination))
     }
-}
-
-fn hex(text: &str) -> Option<u32> {
-    u32::from_str_radix(text.strip_prefix("0x")?, 16).ok()
 }
 
 impl Transport for J1939Transport {
