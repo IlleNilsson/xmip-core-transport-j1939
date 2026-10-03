@@ -17,6 +17,16 @@
 //! round-trip with no hardware, which is what [`J1939Transport::loopback`]
 //! stands up (ADR-0051). On a vehicle the bus is `can0`.
 //!
+//! **A transfer by RTS/CTS is acknowledged after the whole receive cycle**:
+//! the sender waits for the end of message acknowledgement, sent on
+//! [`transport::Verdict::Accepted`], or a connection abort
+//! ([`RESOURCES_NEEDED`]), sent on [`transport::Verdict::Failed`], after which
+//! it sends the group again, or a connection abort for any other reason
+//! ([`OTHER_REASON`]), sent on [`transport::Verdict::Refused`], which it
+//! does not send again. A single frame and a broadcast announced by BAM
+//! are answered by nobody: acceptance is at-most-once there
+//! ([`AT_MOST_ONCE`]). Each group arrives whole.
+//!
 //! The origin URI names the group and the node it came from:
 //! `j1939://<bus>/0x<pgn>?from=0x<source>`.
 
@@ -32,15 +42,32 @@ use can_bus::loopback::Session;
 use can_bus::{Bus, Frame};
 use codec::hex::prefixed_number;
 use net::Target;
-use transport::error::{Result, protocol_error};
+use transport::error::{Result, TransportError, protocol_error};
 use transport::standing::Standing;
-use transport::{Arrived, Directions, Transport};
+use transport::{Acknowledgement, Arrived, Directions, Transport, Verdict};
 
 pub use identifier::{DEFAULT_PRIORITY, GLOBAL, Identifier, PROPRIETARY_A, PROPRIETARY_B};
 pub use loopback::{RECEIVER, SENDER};
 pub use transfer::{CEILING, Control};
 
 use crate::transfer::{PACKET_DATA, SINGLE_FRAME, TP_CM, TP_DT};
+
+/// Connection abort reason 2 of J1939-21 (section 5.10.3.5, the connection
+/// abort): system resources were needed for another task, so the session
+/// was ended. What a failed transfer is answered with; the sender sends it
+/// again.
+pub const RESOURCES_NEEDED: u8 = 2;
+/// Connection abort reason 255 of J1939-21 (section 5.10.3.5): any other
+/// reason than the ones the table lists, none of them a busy one. What a
+/// refused transfer is answered with; the sender does not send it again.
+/// J1939-21 has no abort reason that says *refused*: 255 is the one that
+/// does not ask for a repeat.
+pub const OTHER_REASON: u8 = 255;
+
+/// Why a single frame or a broadcast cannot be acknowledged after the
+/// receive cycle.
+pub const AT_MOST_ONCE: &str = "a J1939 single frame or broadcast (BAM) is answered by nobody: \
+                                only a transfer by RTS/CTS is acknowledged";
 
 /// One node on a J1939 bus.
 ///
@@ -134,6 +161,15 @@ impl J1939Transport {
                     self.send_packets(destination, payload, next, packets)?;
                 }
                 Control::EndOfMessage { .. } => return Ok(()),
+                Control::Abort {
+                    reason: RESOURCES_NEEDED,
+                    ..
+                } => {
+                    return Err(TransportError::retryable(
+                        "the receiver aborted the transfer, its resources needed elsewhere: \
+                         send it again",
+                    ));
+                }
                 Control::Abort { reason, .. } => {
                     return Err(protocol_error(format!(
                         "the receiver aborted the transfer, reason {reason}"
@@ -146,8 +182,13 @@ impl J1939Transport {
         }
     }
 
-    /// Take one parameter group off the bus: a single frame as it is, a
-    /// transfer collected packet by packet.
+    /// Take one parameter group off the bus, whole: a single frame as it
+    /// is, a transfer collected packet by packet. A transfer by RTS/CTS is
+    /// answered by the arrival's verdict: the end of message acknowledgement
+    /// on accepted, an abort for any other reason on refused, which the
+    /// sender does not send again, an abort (resources needed elsewhere) on
+    /// failed, after which the sender sends it again. A single frame and a broadcast are
+    /// at-most-once ([`AT_MOST_ONCE`]).
     ///
     /// # Errors
     /// A malformed frame, a packet out of sequence, or a peer that stops.
@@ -156,7 +197,11 @@ impl J1939Transport {
         match id.pgn {
             TP_CM => self.collect_transfer(id.source, &data),
             TP_DT => Err(protocol_error("a data packet with no connection open")),
-            _ => Ok(Arrived::new(id.origin(self.inbound.name()), data)),
+            _ => Ok(Arrived::whole(
+                id.origin(self.inbound.name()),
+                data,
+                Acknowledgement::at_most_once(AT_MOST_ONCE),
+            )),
         }
     }
 
@@ -232,12 +277,31 @@ impl J1939Transport {
             }
         }
         bytes.truncate(usize::from(size));
-        if clearing {
-            let done = Control::EndOfMessage { size, packets, pgn };
-            self.transmit(TP_CM, peer, &done.encode())?;
-        }
+        let acknowledgement = if clearing {
+            let answering = self.clone();
+            Acknowledgement::deferred(move |verdict| {
+                let answer = match verdict {
+                    Verdict::Accepted => Control::EndOfMessage { size, packets, pgn },
+                    Verdict::Refused(_) => Control::Abort {
+                        reason: OTHER_REASON,
+                        pgn,
+                    },
+                    Verdict::Failed => Control::Abort {
+                        reason: RESOURCES_NEEDED,
+                        pgn,
+                    },
+                };
+                answering.transmit(TP_CM, peer, &answer.encode())
+            })
+        } else {
+            Acknowledgement::at_most_once(AT_MOST_ONCE)
+        };
         let origin = Identifier::new(self.priority, pgn, self.source, peer)?;
-        Ok(Arrived::new(origin.origin(self.inbound.name()), bytes))
+        Ok(Arrived::whole(
+            origin.origin(self.inbound.name()),
+            bytes,
+            acknowledgement,
+        ))
     }
 
     fn transmit(&self, pgn: u32, destination: u8, data: &[u8]) -> Result<()> {
@@ -302,6 +366,13 @@ impl Transport for J1939Transport {
         Directions::BOTH
     }
 
+    fn arrivals(&self) -> transport::Arrivals {
+        transport::Arrivals::Ordered("one line or bus, answered in the order it speaks")
+    }
+
+    /// One parameter group, as [`J1939Transport::collect`] takes it: a
+    /// transfer by RTS/CTS answered after the receive cycle, a single frame
+    /// or a broadcast at-most-once ([`AT_MOST_ONCE`]).
     fn receive(&self) -> Result<Vec<Arrived>> {
         Ok(vec![self.collect()?])
     }
@@ -333,6 +404,8 @@ mod tests {
             .timing_out_after(Duration::from_millis(10));
         sender.send("j1939://can0/0xfeca", b"rpm").expect("sending");
         let arrived = node.collect().expect("collect");
+        assert!(!arrived.defers(), "a single frame is at-most-once");
+        let arrived = arrived.taken().expect("taken");
         assert_eq!(arrived.bytes, b"rpm");
         assert_eq!(arrived.origin_uri, "j1939://loopback/0xfeca?from=0x10");
         assert_eq!(
