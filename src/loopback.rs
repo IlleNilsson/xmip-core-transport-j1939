@@ -73,7 +73,9 @@ impl Loopback for J1939Transport {
             .clearing(self.block)
             .timing_out_after(self.timeout);
         let address = self.standing.stand("j1939", session);
-        Ok(self.standing.far_end(address, move || receiver.collect()))
+        Ok(self
+            .standing
+            .far_end(address, move || receiver.collect()?.taken()))
     }
 
     fn send_to(&self, address: &str, payload: &[u8]) -> Result<()> {
@@ -143,6 +145,43 @@ mod tests {
         assert_eq!(arrived.bytes, b"8 bytes!");
         let arrived = loopback.round(b"9 bytes!!").expect("two packets");
         assert_eq!(arrived.bytes, b"9 bytes!!");
+    }
+
+    #[test]
+    fn a_transfer_is_aborted_for_good_when_refused_and_to_be_sent_again_when_failed() {
+        let session = Session::fresh();
+        let receiver = J1939Transport::new(Arc::clone(&session.far), session.far, RECEIVER)
+            .timing_out_after(LOOPBACK_TIMEOUT);
+        let sender = J1939Transport::new(Arc::clone(&session.near), session.near, SENDER)
+            .timing_out_after(LOOPBACK_TIMEOUT);
+        let payload = patterned(20);
+        let sent = payload.clone();
+        let sending = std::thread::spawn(move || {
+            let refused = sender
+                .deliver(PROPRIETARY_A, RECEIVER, &sent)
+                .expect_err("aborted for good");
+            let failed = sender
+                .deliver(PROPRIETARY_A, RECEIVER, &sent)
+                .expect_err("aborted");
+            sender.deliver(PROPRIETARY_A, RECEIVER, &sent)?;
+            Ok::<_, transport::TransportError>((refused, failed))
+        });
+        let refused = receiver.collect().expect("refused");
+        assert!(refused.defers(), "the sender waits for its end of message");
+        refused
+            .refused(transport::Refusal::Forbidden)
+            .expect("aborted");
+        let first = receiver.collect().expect("first");
+        first.failed().expect("failed");
+        let again = receiver.collect().expect("again");
+        assert_eq!(again.taken().expect("acknowledged").bytes, payload);
+        let (refused, failed) = sending.join().expect("thread").expect("sent again");
+        assert!(!refused.retryable, "{refused}");
+        assert!(refused.message.contains("reason 255"), "{refused}");
+        assert!(failed.retryable, "{failed}");
+        // A broadcast has nobody to answer.
+        let bam = J1939Transport::loopback().addressed_to(PROPRIETARY_B, GLOBAL);
+        assert_eq!(bam.round(&payload).expect("bam").bytes, payload);
     }
 
     #[test]
