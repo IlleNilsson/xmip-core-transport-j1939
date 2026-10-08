@@ -41,6 +41,7 @@ use std::time::{Duration, Instant};
 use can_bus::loopback::Session;
 use can_bus::{Bus, Frame};
 use codec::hex::prefixed_number;
+use context::property::J1939_SOURCE_ADDRESS;
 use net::Target;
 use transport::error::{Result, TransportError, protocol_error};
 use transport::standing::Standing;
@@ -201,7 +202,8 @@ impl J1939Transport {
                 id.origin(self.inbound.name()),
                 data,
                 Acknowledgement::at_most_once(AT_MOST_ONCE),
-            )),
+            )
+            .observing(J1939_SOURCE_ADDRESS, id.source.to_string())),
         }
     }
 
@@ -297,11 +299,10 @@ impl J1939Transport {
             Acknowledgement::at_most_once(AT_MOST_ONCE)
         };
         let origin = Identifier::new(self.priority, pgn, self.source, peer)?;
-        Ok(Arrived::whole(
-            origin.origin(self.inbound.name()),
-            bytes,
-            acknowledgement,
-        ))
+        Ok(
+            Arrived::whole(origin.origin(self.inbound.name()), bytes, acknowledgement)
+                .observing(J1939_SOURCE_ADDRESS, peer.to_string()),
+        )
     }
 
     fn transmit(&self, pgn: u32, destination: u8, data: &[u8]) -> Result<()> {

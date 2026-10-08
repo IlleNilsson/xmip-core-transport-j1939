@@ -17,6 +17,7 @@ use std::sync::Arc;
 use can_bus::Bus;
 use can_bus::loopback::Session;
 use sdk::broadcast::Medium;
+use transport::ArrivalIdentity;
 use transport::error::Result;
 use transport::loopback::{FarEnd, LOOPBACK_TIMEOUT, Loopback};
 
@@ -58,6 +59,10 @@ impl J1939Transport {
 }
 
 impl Loopback for J1939Transport {
+    fn arrival_identity(&self) -> ArrivalIdentity {
+        ArrivalIdentity::Named(&[context::property::J1939_SOURCE_ADDRESS])
+    }
+
     /// [`CEILING`]: 255 packets of seven bytes, the fact J1939-21 states
     /// about its one-byte sequence number.
     fn ceiling(&self) -> Option<usize> {
