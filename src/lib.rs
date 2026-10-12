@@ -371,6 +371,10 @@ impl Transport for J1939Transport {
         transport::Arrivals::Ordered("one line or bus, answered in the order it speaks")
     }
 
+    fn waiting(&self) -> transport::Waiting {
+        transport::Waiting::Waits("a read of the bus waits for a frame until the timeout")
+    }
+
     /// One parameter group, as [`J1939Transport::collect`] takes it: a
     /// transfer by RTS/CTS answered after the receive cycle, a single frame
     /// or a broadcast at-most-once ([`AT_MOST_ONCE`]).
