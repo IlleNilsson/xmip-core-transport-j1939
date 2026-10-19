@@ -378,12 +378,17 @@ impl Transport for J1939Transport {
     /// One parameter group, as [`J1939Transport::collect`] takes it: a
     /// transfer by RTS/CTS answered after the receive cycle, a single frame
     /// or a broadcast at-most-once ([`AT_MOST_ONCE`]).
-    fn receive(&self) -> Result<Vec<Arrived>> {
+    fn receive_up_to(&self, _most: usize) -> Result<Vec<Arrived>> {
         Ok(vec![self.collect()?])
     }
 
+    fn sending(&self) -> transport::Sending {
+        transport::Sending::Gathered("one J1939 transfer carries the whole body")
+    }
+
     /// `target` may name a group and a destination, overriding the node's.
-    fn send(&self, target: &str, bytes: &[u8]) -> Result<()> {
+    fn send_from(&self, target: &str, outgoing: transport::Outgoing<'_>) -> Result<()> {
+        let bytes: &[u8] = &outgoing.gather()?;
         let (pgn, destination) = self.addressed(target)?;
         self.deliver(pgn, destination, bytes)
     }
