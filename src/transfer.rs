@@ -156,7 +156,7 @@ pub fn packet(index: u8, chunk: &[u8]) -> Result<[u8; 8]> {
 ///
 /// # Errors
 /// A frame that is not eight bytes, or a sequence number of zero.
-pub fn unpacket(bytes: &[u8]) -> Result<(u8, &[u8])> {
+pub fn unpack(bytes: &[u8]) -> Result<(u8, &[u8])> {
     let Some((index, data)) = bytes.split_first() else {
         return Err(protocol_error("an empty TP.DT frame"));
     };
@@ -237,12 +237,12 @@ mod tests {
     fn a_data_packet_is_padded_and_read_back_by_its_sequence() {
         let frame = packet(3, &[1, 2, 3]).expect("packet");
         assert_eq!(frame, [3, 1, 2, 3, 0xff, 0xff, 0xff, 0xff]);
-        let (index, data) = unpacket(&frame).expect("unpacket");
+        let (index, data) = unpack(&frame).expect("unpack");
         assert_eq!(index, 3);
         assert_eq!(data, [1, 2, 3, 0xff, 0xff, 0xff, 0xff]);
         assert!(packet(0, &[]).is_err(), "zero");
         assert!(packet(1, &[0; 8]).is_err(), "eight");
-        assert!(unpacket(&[1, 2]).is_err(), "short");
-        assert!(unpacket(&[0; 8]).is_err(), "zero on the wire");
+        assert!(unpack(&[1, 2]).is_err(), "short");
+        assert!(unpack(&[0; 8]).is_err(), "zero on the wire");
     }
 }
