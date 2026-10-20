@@ -270,7 +270,7 @@ impl J1939Transport {
                 if id.pgn != TP_DT {
                     return Err(protocol_error("a frame of another group mid-transfer"));
                 }
-                let (index, chunk) = transfer::unpacket(&data)?;
+                let (index, chunk) = transfer::unpack(&data)?;
                 if u16::from(index) != next {
                     return Err(protocol_error("a data packet out of sequence"));
                 }
