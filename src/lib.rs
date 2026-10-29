@@ -45,7 +45,7 @@ use context::property::J1939_SOURCE_ADDRESS;
 use net::Target;
 use transport::error::{Result, TransportError, protocol_error};
 use transport::standing::Standing;
-use transport::{Acknowledgement, Arrived, Directions, Transport, Verdict};
+use transport::{Acknowledgement, Arrived, Configured, Directions, Transport, Verdict};
 
 pub use identifier::{DEFAULT_PRIORITY, GLOBAL, Identifier, PROPRIETARY_A, PROPRIETARY_B};
 pub use loopback::{RECEIVER, SENDER};
@@ -339,7 +339,7 @@ impl J1939Transport {
     /// `j1939://<bus>/0x<pgn>?to=0x<destination>`, either part optional:
     /// what `target` overrides of this node's group and destination.
     fn addressed(&self, target: &str) -> Result<(u32, u8)> {
-        let Some(named) = Target::under(&["j1939"], target) else {
+        let Some(named) = Target::under(Self::SCHEMES, target) else {
             return Ok((self.pgn, self.destination));
         };
         let path = named.path();

@@ -77,6 +77,9 @@ impl Configured for J1939Transport {
         ],
     };
 
+    /// The schemes a Location's address is entered with to choose this technology.
+    const SCHEMES: &'static [&'static str] = &["j1939"];
+
     fn configured(address: &str, settings: &Read) -> Result<Self> {
         Ok(Self::on(can_bus::open_bus(address)?, settings))
     }
