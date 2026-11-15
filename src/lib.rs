@@ -70,6 +70,10 @@ pub const OTHER_REASON: u8 = 255;
 pub const AT_MOST_ONCE: &str = "a J1939 single frame or broadcast (BAM) is answered by nobody: \
                                 only a transfer by RTS/CTS is acknowledged";
 
+/// How long a peer that stops mid-transfer is waited on unless a Location
+/// says.
+pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(1);
+
 /// One node on a J1939 bus.
 ///
 /// `outbound` carries what this node transmits, `inbound` what the others
@@ -100,7 +104,7 @@ impl J1939Transport {
             pgn: PROPRIETARY_B,
             priority: DEFAULT_PRIORITY,
             block: u8::MAX,
-            timeout: Duration::from_secs(1),
+            timeout: DEFAULT_TIMEOUT,
             standing: Standing::default(),
         }
     }
@@ -126,13 +130,6 @@ impl J1939Transport {
     #[must_use]
     pub const fn clearing(mut self, block: u8) -> Self {
         self.block = if block == 0 { 1 } else { block };
-        self
-    }
-
-    /// Give up on a peer that stops mid-transfer.
-    #[must_use]
-    pub const fn timing_out_after(mut self, timeout: Duration) -> Self {
-        self.timeout = timeout;
         self
     }
 
