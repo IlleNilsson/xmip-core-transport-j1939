@@ -8,8 +8,8 @@ use transport::Configured;
 use transport::error::Result;
 use xcore::settings::{Applies, Fixed, Kind, Presence, Read, Setting, Settings};
 
-use crate::J1939Transport;
 use crate::identifier::{DEFAULT_PRIORITY, GLOBAL, MAX_PGN, PROPRIETARY_B};
+use crate::{DEFAULT_TIMEOUT, J1939Transport};
 
 impl Configured for J1939Transport {
     /// The address is the CAN interface, `can0`, the node sits on; the
@@ -67,18 +67,20 @@ impl Configured for J1939Transport {
                 meaning: "How many packets one clear to send lets through; all when left out.",
                 applies: Applies::Receive,
             },
-            Setting {
-                name: "timeout",
-                kind: Kind::Duration,
-                presence: Presence::Optional,
-                meaning: "How long a peer that stops mid-transfer is waited on.",
-                applies: Applies::Both,
-            },
+            transport::configured::timeout(
+                Applies::Both,
+                Some(DEFAULT_TIMEOUT),
+                "How long a peer that stops mid-transfer is waited on.",
+            ),
         ],
     };
 
     /// The schemes a Location's address is entered with to choose this technology.
     const SCHEMES: &'static [&'static str] = &["j1939"];
+
+    fn timeout_kept(&mut self) -> Option<&mut dyn transport::configured::TimeoutKept> {
+        Some(&mut self.timeout)
+    }
 
     fn configured(address: &str, settings: &Read) -> Result<Self> {
         Ok(Self::on(can_bus::open_bus(address)?, settings))
@@ -110,10 +112,7 @@ impl J1939Transport {
         if let Some(block) = byte("block") {
             node = node.clearing(block);
         }
-        match settings.optional_duration("timeout") {
-            Some(timeout) => node.timing_out_after(timeout),
-            None => node,
-        }
+        node
     }
 }
 
@@ -121,7 +120,6 @@ impl J1939Transport {
 mod tests {
     use super::*;
     use can_bus::loopback::Session;
-    use std::time::Duration;
     use xcore::settings::Given;
 
     #[test]
@@ -139,7 +137,19 @@ mod tests {
         assert_eq!(node.source, 0x21);
         assert_eq!((node.pgn, node.destination), (PROPRIETARY_B, 0x10));
         assert_eq!(node.priority, DEFAULT_PRIORITY);
-        assert_eq!(node.timeout, Duration::from_millis(250));
+        // The Location's timeout is what `open` hands the node once it is
+        // built (`transport::Configured`), on a bus this build simulates.
+        #[cfg(not(all(feature = "socketcan", target_os = "linux")))]
+        {
+            let opened = J1939Transport::open("can0", Applies::Send, &given).expect("opened");
+            assert_eq!(opened.timeout, std::time::Duration::from_millis(250));
+        }
+        // Left out, the Location waits the default it declares.
+        let unsaid = declared.read(Applies::Receive, &given[..1]).expect("read");
+        let timeout = unsaid.optional_duration(transport::configured::TIMEOUT);
+        assert_eq!(timeout, Some(DEFAULT_TIMEOUT));
+        let node = J1939Transport::on(Session::fresh().near, &unsaid);
+        assert_eq!(node.timeout, DEFAULT_TIMEOUT);
 
         let Err(refused) = J1939Transport::open("can0", Applies::Receive, &given[..2]) else {
             panic!("a Receive Location reads no destination");
