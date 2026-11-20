@@ -14,9 +14,7 @@
 
 use std::sync::Arc;
 
-use can_bus::Bus;
 use can_bus::loopback::Session;
-use sdk::broadcast::Medium;
 use transport::ArrivalIdentity;
 use transport::Configured;
 use transport::error::Result;
@@ -40,7 +38,7 @@ impl J1939Transport {
     /// round stands up its own.
     #[must_use]
     pub fn loopback() -> Self {
-        let idle: Arc<dyn Bus> = Arc::new(Medium::new("loopback").node());
+        let idle = can_bus::simulated("loopback");
         Self::new(Arc::clone(&idle), idle, SENDER)
             .addressed_to(PROPRIETARY_A, RECEIVER)
             .timing_out_after(LOOPBACK_TIMEOUT)
