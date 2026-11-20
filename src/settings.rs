@@ -138,12 +138,11 @@ mod tests {
         assert_eq!((node.pgn, node.destination), (PROPRIETARY_B, 0x10));
         assert_eq!(node.priority, DEFAULT_PRIORITY);
         // The Location's timeout is what `open` hands the node once it is
-        // built (`transport::Configured`), on a bus this build simulates.
-        #[cfg(not(all(feature = "socketcan", target_os = "linux")))]
-        {
-            let opened = J1939Transport::open("can0", Applies::Send, &given).expect("opened");
-            assert_eq!(opened.timeout, std::time::Duration::from_millis(250));
-        }
+        // built (`Configured::finished`), here on the simulated bus by its own
+        // constructor, so it holds where a build opens the kernel's.
+        let opened =
+            J1939Transport::on(can_bus::simulated("can0"), &read).finished(&read, Applies::Send);
+        assert_eq!(opened.timeout, std::time::Duration::from_millis(250));
         // Left out, the Location waits the default it declares.
         let unsaid = declared.read(Applies::Receive, &given[..1]).expect("read");
         let timeout = unsaid.optional_duration(transport::configured::TIMEOUT);
