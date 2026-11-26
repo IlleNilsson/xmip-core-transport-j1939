@@ -29,55 +29,68 @@
 //!
 //! The origin URI names the group and the node it came from:
 //! `j1939://<bus>/0x<pgn>?from=0x<source>`.
+//!
+//! **Built with its `declaration` feature alone** the crate is
+//! [`declaration`], what a Location of it is configured with, and none of
+//! the code above, which is behind the default feature: what the surfaces'
+//! library carries (ADR-0064, amendment 2026-11-26).
 
+#[cfg(feature = "default")]
+mod configured;
+#[cfg(feature = "declaration")]
+pub mod declaration;
+#[cfg(feature = "default")]
 pub mod identifier;
+#[cfg(feature = "default")]
 pub mod loopback;
-mod settings;
+#[cfg(feature = "default")]
 pub mod transfer;
 
+#[cfg(feature = "default")]
 use std::sync::Arc;
+#[cfg(feature = "default")]
 use std::time::{Duration, Instant};
 
+#[cfg(feature = "default")]
 use can_bus::loopback::Session;
+#[cfg(feature = "default")]
 use can_bus::{Bus, Frame};
+#[cfg(feature = "default")]
 use codec::hex::prefixed_number;
+#[cfg(feature = "default")]
 use context::property::J1939_SOURCE_ADDRESS;
+#[cfg(feature = "default")]
 use net::Target;
+#[cfg(feature = "default")]
 use transport::error::{Result, TransportError, protocol_error};
+#[cfg(feature = "default")]
 use transport::standing::Standing;
-use transport::{Acknowledgement, Arrived, Configured, Directions, Transport, Verdict};
+#[cfg(feature = "default")]
+use transport::{Acknowledgement, Arrived, Configured, Directions, Transport};
 
-pub use identifier::{DEFAULT_PRIORITY, GLOBAL, Identifier, PROPRIETARY_A, PROPRIETARY_B};
+#[cfg(feature = "declaration")]
+pub use declaration::{DEFAULT_PRIORITY, DEFAULT_TIMEOUT, GLOBAL, PROPRIETARY_B};
+#[cfg(feature = "default")]
+pub use identifier::{Identifier, PROPRIETARY_A};
+#[cfg(feature = "default")]
 pub use loopback::{RECEIVER, SENDER};
-pub use transfer::{CEILING, Control};
+#[cfg(feature = "default")]
+pub use transfer::{CEILING, Control, OTHER_REASON, RESOURCES_NEEDED};
 
+#[cfg(feature = "default")]
 use crate::transfer::{PACKET_DATA, SINGLE_FRAME, TP_CM, TP_DT};
-
-/// Connection abort reason 2 of J1939-21 (section 5.10.3.5, the connection
-/// abort): system resources were needed for another task, so the session
-/// was ended. What a failed transfer is answered with; the sender sends it
-/// again.
-pub const RESOURCES_NEEDED: u8 = 2;
-/// Connection abort reason 255 of J1939-21 (section 5.10.3.5): any other
-/// reason than the ones the table lists, none of them a busy one. What a
-/// refused transfer is answered with; the sender does not send it again.
-/// J1939-21 has no abort reason that says *refused*: 255 is the one that
-/// does not ask for a repeat.
-pub const OTHER_REASON: u8 = 255;
 
 /// Why a single frame or a broadcast cannot be acknowledged after the
 /// receive cycle.
+#[cfg(feature = "default")]
 pub const AT_MOST_ONCE: &str = "a J1939 single frame or broadcast (BAM) is answered by nobody: \
                                 only a transfer by RTS/CTS is acknowledged";
-
-/// How long a peer that stops mid-transfer is waited on unless a Location
-/// says.
-pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(1);
 
 /// One node on a J1939 bus.
 ///
 /// `outbound` carries what this node transmits, `inbound` what the others
 /// do; on a vehicle and on the simulated bus they are one node.
+#[cfg(feature = "default")]
 #[derive(Clone)]
 pub struct J1939Transport {
     outbound: Arc<dyn Bus>,
@@ -91,6 +104,7 @@ pub struct J1939Transport {
     standing: Standing<Session>,
 }
 
+#[cfg(feature = "default")]
 impl J1939Transport {
     /// A node at address `source`, sending [`PROPRIETARY_B`] to everyone
     /// until told otherwise.
@@ -279,17 +293,7 @@ impl J1939Transport {
         let acknowledgement = if clearing {
             let answering = self.clone();
             Acknowledgement::deferred(move |verdict| {
-                let answer = match verdict {
-                    Verdict::Accepted => Control::EndOfMessage { size, packets, pgn },
-                    Verdict::Refused(_) => Control::Abort {
-                        reason: OTHER_REASON,
-                        pgn,
-                    },
-                    Verdict::Failed => Control::Abort {
-                        reason: RESOURCES_NEEDED,
-                        pgn,
-                    },
-                };
+                let answer = Control::answering(verdict, size, packets, pgn);
                 answering.transmit(TP_CM, peer, &answer.encode())
             })
         } else {
@@ -355,6 +359,7 @@ impl J1939Transport {
     }
 }
 
+#[cfg(feature = "default")]
 impl Transport for J1939Transport {
     fn name(&self) -> &'static str {
         "j1939"

@@ -1,82 +1,20 @@
-//! What a J1939 Location says beyond its address, declared once and read
-//! through (ADR-0064, amendment 2026-09-26).
+//! How a J1939 node is configured: the CAN interface as the address, the
+//! node's own address and what it sends as its settings, which the
+//! declaration holds (`declaration.rs`) and this reads through (ADR-0064,
+//! amendment 2026-09-26).
 
 use std::sync::Arc;
 
 use can_bus::Bus;
 use transport::Configured;
 use transport::error::Result;
-use xcore::settings::{Applies, Fixed, Kind, Presence, Read, Setting, Settings};
+use xcore::settings::{Read, Settings};
 
-use crate::identifier::{DEFAULT_PRIORITY, GLOBAL, MAX_PGN, PROPRIETARY_B};
-use crate::{DEFAULT_TIMEOUT, J1939Transport};
+use crate::{J1939Transport, declaration};
 
 impl Configured for J1939Transport {
-    /// The address is the CAN interface, `can0`, the node sits on; the
-    /// settings are the node's own address and what it sends.
-    const SETTINGS: &'static Settings = &Settings {
-        technology: env!("CARGO_PKG_NAME"),
-        settings: &[
-            Setting {
-                name: "source",
-                kind: Kind::Integer {
-                    minimum: 0,
-                    maximum: 253,
-                },
-                presence: Presence::Required,
-                meaning: "The address this node sends from and is sent to on the bus.",
-                applies: Applies::Both,
-            },
-            Setting {
-                name: "pgn",
-                kind: Kind::Integer {
-                    minimum: 0,
-                    maximum: MAX_PGN as i64,
-                },
-                presence: Presence::Default(Fixed::Integer(PROPRIETARY_B as i64)),
-                meaning: "The parameter group sent when the target names none.",
-                applies: Applies::Send,
-            },
-            Setting {
-                name: "destination",
-                kind: Kind::Integer {
-                    minimum: 0,
-                    maximum: 255,
-                },
-                presence: Presence::Default(Fixed::Integer(GLOBAL as i64)),
-                meaning: "The node sent to when the target names none; 255 broadcasts.",
-                applies: Applies::Send,
-            },
-            Setting {
-                name: "priority",
-                kind: Kind::Integer {
-                    minimum: 0,
-                    maximum: 7,
-                },
-                presence: Presence::Default(Fixed::Integer(DEFAULT_PRIORITY as i64)),
-                meaning: "The priority of every frame this node sends, zero the most urgent.",
-                applies: Applies::Both,
-            },
-            Setting {
-                name: "block",
-                kind: Kind::Integer {
-                    minimum: 1,
-                    maximum: 255,
-                },
-                presence: Presence::Optional,
-                meaning: "How many packets one clear to send lets through; all when left out.",
-                applies: Applies::Receive,
-            },
-            transport::configured::timeout(
-                Applies::Both,
-                Some(DEFAULT_TIMEOUT),
-                "How long a peer that stops mid-transfer is waited on.",
-            ),
-        ],
-    };
-
-    /// The schemes a Location's address is entered with to choose this technology.
-    const SCHEMES: &'static [&'static str] = &["j1939"];
+    const SETTINGS: &'static Settings = declaration::SETTINGS;
+    const SCHEMES: &'static [&'static str] = declaration::SCHEMES;
 
     fn timeout_kept(&mut self) -> Option<&mut dyn transport::configured::TimeoutKept> {
         Some(&mut self.timeout)
@@ -119,8 +57,9 @@ impl J1939Transport {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{DEFAULT_PRIORITY, DEFAULT_TIMEOUT, PROPRIETARY_B};
     use can_bus::loopback::Session;
-    use xcore::settings::Given;
+    use xcore::settings::{Applies, Given};
 
     #[test]
     fn j1939_declares_its_settings_and_reads_through_them() {

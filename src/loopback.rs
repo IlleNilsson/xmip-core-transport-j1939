@@ -107,7 +107,7 @@ mod tests {
     use std::time::Instant;
     use transport::payload::{edge_payloads, patterned};
 
-    use crate::identifier::{GLOBAL, PROPRIETARY_B};
+    use crate::declaration::{GLOBAL, PROPRIETARY_B};
 
     #[test]
     fn the_loopback_returns_the_edge_payloads_whole_and_refuses_over_the_brim() {

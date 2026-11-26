@@ -10,6 +10,7 @@
 //! and a fact of the protocol.
 
 use net::ceiling;
+use transport::Verdict;
 use transport::error::{Result, protocol_error};
 
 /// Connection management, PDU1: its specific byte is the destination.
@@ -32,6 +33,18 @@ const CLEAR_TO_SEND: u8 = 17;
 const END_OF_MESSAGE: u8 = 19;
 const BROADCAST: u8 = 32;
 const ABORT: u8 = 255;
+
+/// Connection abort reason 2 of J1939-21 (section 5.10.3.5, the connection
+/// abort): system resources were needed for another task, so the session
+/// was ended. What a failed transfer is answered with; the sender sends it
+/// again.
+pub const RESOURCES_NEEDED: u8 = 2;
+/// Connection abort reason 255 of J1939-21 (section 5.10.3.5): any other
+/// reason than the ones the table lists, none of them a busy one. What a
+/// refused transfer is answered with; the sender does not send it again.
+/// J1939-21 has no abort reason that says *refused*: 255 is the one that
+/// does not ask for a repeat.
+pub const OTHER_REASON: u8 = 255;
 
 /// One TP.CM frame.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -60,6 +73,27 @@ impl Control {
             | Self::EndOfMessage { pgn, .. }
             | Self::Broadcast { pgn, .. }
             | Self::Abort { pgn, .. } => pgn,
+        }
+    }
+
+    /// What a receiver answers a transfer of `size` bytes in `packets`
+    /// packets of `pgn` by RTS/CTS with once its receive cycle ended: the
+    /// end of message acknowledgement on accepted, an abort for any other
+    /// reason ([`OTHER_REASON`]) on refused, which the sender does not send
+    /// again, an abort, resources needed elsewhere ([`RESOURCES_NEEDED`]),
+    /// on failed, after which the sender sends the group again.
+    #[must_use]
+    pub fn answering(verdict: Verdict, size: u16, packets: u8, pgn: u32) -> Self {
+        match verdict {
+            Verdict::Accepted => Self::EndOfMessage { size, packets, pgn },
+            Verdict::Refused(_) => Self::Abort {
+                reason: OTHER_REASON,
+                pgn,
+            },
+            Verdict::Failed => Self::Abort {
+                reason: RESOURCES_NEEDED,
+                pgn,
+            },
         }
     }
 

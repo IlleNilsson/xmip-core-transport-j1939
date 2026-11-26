@@ -11,17 +11,10 @@
 
 use transport::error::{Result, protocol_error};
 
-/// The address every node listens at: a PDU2 frame's destination, and a
-/// PDU1 frame's when it is broadcast.
-pub const GLOBAL: u8 = 0xff;
-/// The largest parameter group number: eighteen bits.
-pub const MAX_PGN: u32 = 0x3_ffff;
-/// The priority a data frame goes out with unless told otherwise.
-pub const DEFAULT_PRIORITY: u8 = 6;
+use crate::declaration::{GLOBAL, MAX_PGN};
+
 /// Proprietary A: a destination-specific group any manufacturer may use.
 pub const PROPRIETARY_A: u32 = 0xef00;
-/// Proprietary B: a broadcast group any manufacturer may use.
-pub const PROPRIETARY_B: u32 = 0xff00;
 /// The first PDU format that is a group extension rather than a destination.
 const PDU2: u32 = 240;
 
